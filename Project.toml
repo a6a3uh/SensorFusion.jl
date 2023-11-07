@@ -1,0 +1,4 @@
+name = "SensorFusion"
+uuid = "3570df68-b181-487e-a5f0-c7cfdf8b5c9e"
+authors = ["Ali Tlisov <ali.tlisov@gmail.com>"]
+version = "0.1.0"
