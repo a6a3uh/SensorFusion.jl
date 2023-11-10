@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.19.27
+# v0.19.32
 
 using Markdown
 using InteractiveUtils
@@ -264,11 +264,6 @@ function specifics(
 		P = process(m)(P)
 		S = measure(m)(P)
 		W = P * A(measure(m))'
-		# 
-		# F = W * pinv(S)
-		# P = (I - F * C) * P
-		# P = P - F * S * F'
-		# P, x + F * (ỹ - y)
 		(;x, y, P, S, W)
 end;
 

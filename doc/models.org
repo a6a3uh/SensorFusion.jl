@@ -1,0 +1,430 @@
+#+STARTUP: latexpreview
+#+LANGUAGE: ru
+#+LATEX_HEADER: \usepackage{amsmath}
+#+LATEX_HEADER: \DeclareMathOperator{\sign}{sign}
+#+LATEX_HEADER: \DeclareMathOperator{\atan2}{atan2}
+#+LATEX_HEADER: \usepackage{alphabeta}
+#+LATEX_HEADER: \usepackage[citestyle=authoryear-icomp,bibstyle=authoryear, hyperref=true,backref=true,maxcitenames=3,url=true,backend=biber,natbib=true] {biblatex}
+#+LaTeX_HEADER: \usepackage[T2A]{fontenc}
+#+LaTeX_HEADER: \usepackage[english, russian]{babel}
+#+LaTeX_HEADER: \usepackage[utf8]{inputenc}
+#+LaTeX_HEADER: \usepackage{tikzsymbols}
+#+BIBLIOGRAPHY: ../papers/attitude.bib
+#+PROPERTY: header-args: :exports both :results value :comments both
+#+PROPERTY: header-args:julia :session *jl* :kernel julia-1.9 :async yes :exports code
+#+OPTIONS: H:5
+#+OPTIONS: ^:nil
+#+OPTIONS: toc:nil
+#+EXPORT_EXCLUDE_TAGS: noexport
+
+#+begin_src julia :results none
+  using Pkg
+  Pkg.activate("..")
+#+end_src
+
+#+begin_src julia :results none
+  using CSV
+  using Tables
+  using LinearAlgebra
+  using ForwardDiff
+  using Transducers
+  using Plots
+#+end_src
+
+* Модель
+** Линейная модель
+Линейную модель опишем согласно уравнению:
+
+\begin{equation}
+  y^l = A^{l \times n} x^n +
+  B^{l \times m} u^m +  v^{l},
+\end{equation}
+
+где $x$ - состояние (случайный вектор) $u$ - (опциональное) управление (для простоты примем его детерминированным), $v$- случайный вектор (шум, возмущение), $A$, $B$, $Q$ - матрицы. Индексами сверху показаны размерности.
+
+#+begin_src julia :results none
+  abstract type Model end
+  abstract type Linear <: Model end
+
+  "Linear system equation"
+  (m::Linear)(x::AbstractVector{<:Real}, u=0, _...) =
+      A(m) * x .+ B(m) * u
+
+  "Control matrix"
+  B(::Linear) = 0
+
+  "Model size"
+  sz(m::Linear) = size(A(m), 1)
+#+end_src
+
+Случайная величина $v$ задается выражением:
+
+\begin{equation}
+\label{noise}
+v^{l} = Q^{l \times p}  e^p ,
+\end{equation}
+
+где $e$ - несмещенный случайный вектор с единичной ковариацией.
+
+Матрица ковариации случайной величины $v$ в результате линейного преобразования, заданного матрицей $Q$, будет иметь вид
+
+\begin{equation}
+Cov(v) = Q \cdot Q^T 
+\end{equation}
+
+#+begin_src julia :results none
+  cov(m::Linear, _...) = Q(m) * Q(m)'
+#+end_src
+
+Матрица ковариации случайной величины $y$ будет иметь вид
+
+\begin{equation}
+Cov(y) = A \cdot P \cdot A + Cov(v) ,
+\end{equation}
+
+где $P$ - матрица ковариации случайной величины $x$.
+
+#+begin_src julia :results none
+  "Covariance propagation common formula for linear
+  and linearized systems"
+  (m::Model)(P::AbstractMatrix, x, u=0) =
+      A(m, x, u) * P * A(m, x, u)' + cov(m, x, u)
+#+end_src
+
+** Нелинейная модель и ее линеаризация
+
+#+begin_src julia :results none
+  abstract type Nonlinear <: Model end
+#+end_src
+
+#+RESULTS:
+
+Уравнение для нелинейной системы в наиболее общем виде:
+
+\begin{equation}
+x=f(x, u, v)
+\end{equation}
+
+После линеарицайии, значение матрицы $A$ будет
+
+\begin{equation}
+A=\frac{\partial}{\partial x} f(x, u, 0) .
+\end{equation}
+
+#+begin_src julia :results none
+  "Linearized state matrix"
+  A(m::Nonlinear, x, u=0) =
+      ForwardDiff.jacobian(x->m(x, u), x)
+#+end_src
+
+Значение матрицы $B$ будет:
+
+\begin{equation}
+B = \frac{\partial}{\partial u} f(x, u, 0).
+\end{equation}
+
+#+begin_src julia :results none
+  "Linearized control matrix"
+  B(m::Nonlinear, x, u=0) =
+      ForwardDiff.jacobian(x->m(x, u), u)
+#+end_src
+
+Линеаризация по случйной величине будет:
+
+\begin{equation}
+D = \frac{\partial}{\partial v} f(x, u, 0) .
+\end{equation}
+
+#+begin_src julia :results none
+  D(m::Nonlinear, x, u=0) =
+      ForwardDiff.jacobian(e->m(x, u, e), zeros(size(Q(m), 1)))
+#+end_src
+
+Тогда выражение для матрицы ковариации случайного воздействия, заданного согласно eqref:noise, будет иметь вид:
+
+\begin{equation}
+Cov(v) = D Q Q^T D^T .
+\end{equation}
+
+#+begin_src julia :results none
+  cov(m::Nonlinear, x, u=0) =
+      D(m, x, u) * Q(m) * Q(m)' * D(m, x, u)'
+#+end_src
+
+** Процесс
+
+Будем рассматривать (марковский) процесс, в котором состояние на текущем шаге зависит только от предыдущего состояния:
+
+\begin{equation}
+x_k = f(x_{k-1}, u_k, v_k) .
+\end{equation}
+
+Линейный (линеаризованный) процесс будет иметь вид:
+
+\begin{equation}
+x_k = A x_{k-1} + B u_k + v_k  .
+\end{equation}
+
+Эти процессы описываются моделями приведенным выше (при замене $x$ на $x_{k-1}$ и $y$ на $x_k$. Так что все приведенные выше соотношения будут для него верны.
+
+Будем рассматривать измерение:
+
+\begin{equation}
+y_k=h(x_k, u_k, \epsilon_k)
+\end{equation}
+
+Линейная (линеаризованная) модель измерений будет иметь вид:
+
+\begin{equation}
+y_k = C x_k + D u_k + \epsilon_k
+\end{equation}
+
+Такое измерение так же описывается приведенными выше моделями при замене $C=A$, $D=B$, $\epsilon = v$.
+
+* Линейный и расширенный фильтры Калмана
+
+#+begin_src julia :results none
+  abstract type Kalman end
+  struct LinearKalman <: Kalman end
+#+end_src
+
+Линейный фильтр Калмана использует линейную или линеаризованную модель процесса.
+По линеынм моделям считаются значения состояния на следующем шаге $x_{k|k-1}$ и прогноз измерения $y_{k}$. Так же считаются матрицы ковариации состояния $P_{k|k-1}$ и измерения $S$. Матрица кросс-ковариации $W$ считается по формуле:
+
+\begin{equation}
+W = P C^T .
+\end{equation}
+
+#+begin_src julia :results none
+    "Part of Kalman filter common for
+    model based (KF, EKF) and sampling based (UKF)
+    cov propagation"
+    function specifics(
+            method::LinearKalman,
+            process::Model,
+            measure::Model,
+            P::AbstractMatrix,
+            x::AbstractVector,
+            u=0)
+        x = process(x, u)
+        y = measure(x, u)
+        P = process(P, x)
+        S = measure(P, x)
+        W = P * A(measure, x)' # measurement model's A is actually C
+        (;x, y, P, S, W)
+    end
+#+end_src
+
+Коэффициент фильтра считается согласно выражения:
+
+\begin{equation}
+F = W S^{-1} .
+\end{equation}
+
+Матрица ковариации обновляется согласно формуле:
+
+\begin{equation}
+\label{update}
+P_k = P_{k|k-1} - F S F^T .
+\end{equation}
+
+Значение состояния рассчитывается следующим образом:
+
+\begin{equation}
+x_k = x_{k|k-1} + F (\tilde y - y_k) ,
+\end{equation}
+
+где $\tilde y$ - измерение.
+
+#+begin_src julia :results none
+  "Update function of Kalman filters"
+  update(process, measure, method) = (
+      P::AbstractMatrix,
+      x::AbstractVector,
+      ỹ::AbstractVector,
+      u = 0) -> let
+      x, y, P, S, W = specifics(method, process, measure, P, x, u)
+      F = W * pinv(S) # p(x|y)
+      P = P - F * S * F'
+      P, x + F * (ỹ - y)
+  end;
+#+end_src
+
+Функция, оценивающая итеративно состояние по наблюдениям (возвращает матрицы ковариации и состояния для всех шагов):
+
+#+begin_src julia :results none
+  function estimate(process::Model,
+                    measure::Model,
+                    method::Kalman,
+                    P₀, x₀, ys,
+                    us=Iterators.repeated(0))
+      P, x = zip(ys, us) |> Scan(
+  	(P₀, x₀)) do (P, x), (y, u) 
+  	    update(process, measure, method)(P, x, y, u)
+  	end |> xs -> zip(xs...) |> collect
+  end
+#+end_src
+
+* Задача
+** Постановка
+*** Уравнения движения
+Рассмотрим уравнения движения катера с примерно постоянной угловой скоростью:
+
+#+begin_src julia :results none
+  struct Boat <: Nonlinear
+      σv::Real
+      σω::Real
+      T::Real
+  end
+
+  "Boat moving with almost constant angular velocity"
+  function (m::Boat)(x::AbstractVector{<:Real}, u=0, e=zeros(5))
+      ω = x[end]
+      ϕ = m.T * ω
+      c = cos(ϕ)
+      s = sin(ϕ)
+      [
+          1 0 s/ω (c-1)/ω 0;
+          0 1 (1-c)/ω s/ω 0;
+          0 0 c -s 0;
+          0 0 s c 0;
+          0 0 0 0 1
+      ] * x + e
+  end
+  # noise matrix
+  Q(m::Boat) = Diagonal([0, 0, m.σv, m.σv, m.σω]);
+  # state size
+  sz(::Boat) = 5
+#+end_src
+
+Ф-я построяния графиков
+#+begin_src julia :results none
+  function plot_boat(process, measure, method, P₀, x₀, ys, track)
+      
+      P, x = estimate(process, measure, method, P₀, x₀, eachrow(ys))
+      l = @layout [a b c; c d e]
+
+      p5 = plot([x[5] for x in x], label="estimated ω")
+      plot!(track[:,5], label="reference ω")
+
+      p6 = scatter(track[:,1], track[:,2], c=colormap("Blues",size(track, 1)), label="reference")
+      scatter!([x[1] for x in x], [x[2] for x in x], 
+  		 c=colormap("Reds",length(x)), label="estimated")
+      
+      p1 = plot([x[1] for x in x], label="estimated x₁")
+      plot!(track[:,1], label="reference x₁")
+      
+      p2 = plot([x[2] for x in x], label="estimated x₂")
+      plot!(track[:,2], label="reference x₂")
+      
+      p3 = plot([x[3] for x in x], label="estimated v₁")
+      plot!(track[:,3], label="reference v₁")
+      
+      p4 = plot([x[4] for x in x], label="estimated v₂")
+      plot!(track[:,4], label="reference v₂")
+      
+      plot(p1, p3, p5, p2, p4, p6, layout = l)
+  end
+#+end_src
+*** Уравнения измерения
+**** Линейная модель измерений в декартовой системе координат
+#+begin_src julia :results none
+  struct BoatMeasure <: Linear
+  	σₓ::Real # 0.8 [m]
+  end;
+  A(::BoatMeasure, _...) = [1 0 0 0 0; 0 1 0 0 0];
+  Q(c::BoatMeasure, _...) = [c.σₓ 0; 0 c.σₓ];
+#+end_src
+
+
+#+begin_src julia :results none
+  plot_boat(Boat(0.02, 0.001, 0.5),
+            BoatMeasure(0.8),
+            LinearKalman(),
+            I(5)*1e-1,
+            [20.0, 10.0, 0.15, 0.35, 0.501],
+            CSV.File("../data/observationscoord.csv"; header=false) |> Tables.matrix,
+            CSV.File("../data/trackturn.csv"; header=false) |> Tables.matrix)
+
+  savefig("./images/boat_linmeas.png")
+#+end_src
+
+  [[./images/boat_linmeas.png]]
+
+**** Измерение с помощью одного радара
+
+#+begin_src julia :results none
+  struct Radar <: Nonlinear
+      σr::Real
+      σϕ::Real
+      position::AbstractVector{<:Real}
+  end
+
+  function (m::Radar)(x::AbstractVector{<:Real}, u=0, e=zeros(2))
+      h = x -> [sqrt(x[1]^2 + x[2]^2); atan(x[2], x[1])]
+      r, ϕ = h(x[1:2] .- m.position)
+      [r + e[1], ϕ + e[2] / r]
+  end
+      
+  Q(c::Radar, _...) = Diagonal([c.σr, c.σϕ]);
+
+  sz(::Radar) = 2
+#+end_src
+
+#+begin_src julia :results none
+    let radar = Radar(1, 0.02, [0,0])
+        turntrack = CSV.File("../data/trackturn.csv"; header=false) |> Tables.matrix
+        turnobservations = CSV.File("../data/observationscoord.csv";
+                                    header=false) |> Tables.matrix
+        radar_meas = hcat(radar.(eachrow(turntrack[:,1:2]))...) +
+            Q(radar).^2 * randn(2, size(turntrack, 1))
+        plot_boat(Boat(0.2, 0.001, 0.5), radar, LinearKalman(),
+                 I(5), [20.0, 10.0, 0.15, 0.35, 0.501],
+                 radar_meas', turntrack)
+
+        savefig("./images/boat_radar.png")
+    end
+#+end_src
+
+[[./images/boat_radar.png]]
+
+**** Измерение двумя радарами с нелинейной моделью ошибок
+Рассмотрим нелинейную модель измерения положения с помощью радара:
+
+
+Опишем модель измерения с помощью двух радаров
+
+#+begin_src julia :results none
+  struct DoubleRadar <: Nonlinear
+      r₁::Radar
+      r₂::Radar
+  end
+
+  (m::DoubleRadar)(x::AbstractVector{<:Real}, u=0, e=zeros(4)) =
+      [m.r₁(x, u, e[1:2]); m.r₂(x, u, e[3:4])]
+
+  Q(m::DoubleRadar, _...) = Diagonal([diag(Q(m.r₁)); diag(Q(m.r₂))])
+
+  sz(::DoubleRadar) = 4
+#+end_src
+
+Моделирование
+
+#+begin_src julia :results none :cache yes
+  plot_boat(Boat(0.02, 0.001, 0.5),
+            DoubleRadar(Radar(0.9, 0.01, [0,0]),
+                        Radar(0.9, 0.01, [10, 0])),
+            LinearKalman(),
+            I(5)*1e-2,
+            [8.1,18.9,0.015,0.025,0.051401],
+            CSV.File("../data/exam-observations-polar.csv";
+                     header=false) |> Tables.matrix,
+            CSV.File("../data/exam-track.csv"; header=false) |>
+                Tables.matrix)
+
+  savefig("./images/result.png")
+#+end_src
+
+
+[[./images/result.png]]
+
