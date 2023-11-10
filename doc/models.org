@@ -17,6 +17,9 @@
 #+OPTIONS: toc:nil
 #+EXPORT_EXCLUDE_TAGS: noexport
 
+#+author: Али Тлисов
+#+title: Комплексирование
+
 #+begin_src julia :results none
   using Pkg
   Pkg.activate("..")
@@ -30,6 +33,7 @@
   using Transducers
   using Plots
 #+end_src
+
 
 * Модель
 ** Линейная модель
@@ -54,7 +58,7 @@
   B(::Linear) = 0
 
   "Model size"
-  sz(m::Linear) = size(A(m), 1)
+  xsize(m::Linear) = size(A(m), 1)
 #+end_src
 
 Случайная величина $v$ задается выражением:
@@ -73,7 +77,7 @@ Cov(v) = Q \cdot Q^T
 \end{equation}
 
 #+begin_src julia :results none
-  cov(m::Linear, _...) = Q(m) * Q(m)'
+  cov(m::Model, x, u) = Q(m, x, u) * Q(m, x, u)'
 #+end_src
 
 Матрица ковариации случайной величины $y$ будет иметь вид
@@ -96,8 +100,6 @@ Cov(y) = A \cdot P \cdot A + Cov(v) ,
 #+begin_src julia :results none
   abstract type Nonlinear <: Model end
 #+end_src
-
-#+RESULTS:
 
 Уравнение для нелинейной системы в наиболее общем виде:
 
@@ -132,23 +134,12 @@ B = \frac{\partial}{\partial u} f(x, u, 0).
 Линеаризация по случйной величине будет:
 
 \begin{equation}
-D = \frac{\partial}{\partial v} f(x, u, 0) .
+Q = \frac{\partial}{\partial v} f(x, u, 0) .
 \end{equation}
 
 #+begin_src julia :results none
-  D(m::Nonlinear, x, u=0) =
-      ForwardDiff.jacobian(e->m(x, u, e), zeros(size(Q(m), 1)))
-#+end_src
-
-Тогда выражение для матрицы ковариации случайного воздействия, заданного согласно eqref:noise, будет иметь вид:
-
-\begin{equation}
-Cov(v) = D Q Q^T D^T .
-\end{equation}
-
-#+begin_src julia :results none
-  cov(m::Nonlinear, x, u=0) =
-      D(m, x, u) * Q(m) * Q(m)' * D(m, x, u)'
+  Q(m::Nonlinear, x, u=0) =
+      ForwardDiff.jacobian(e->m(x, u, e), zeros(esize(m)))
 #+end_src
 
 ** Процесс
@@ -180,6 +171,73 @@ y_k = C x_k + D u_k + \epsilon_k
 \end{equation}
 
 Такое измерение так же описывается приведенными выше моделями при замене $C=A$, $D=B$, $\epsilon = v$.
+
+
+* Комплексирование измерений :noexport:
+#+begin_src julia :results none
+  abstract type Estimation end
+
+  struct MonteCarlo <: Estimation
+      n::Integer
+  end
+
+  struct Linearized <: Estimation end
+
+  struct SigmaPoint <: Estimation
+      w₀::Real
+  end
+#+end_src
+
+
+#+begin_src julia :results none
+  μ(x, w) = sum(eachcol(x)) .* w
+
+  function Σ(w::AbstractVector{<:Real})
+      function Σ(
+          x::AbstractVector{<:AbstractVector{<:Real}},
+          y::AbstractVector{<:AbstractVector{<:Real}})
+  	each((x, y, w)) = (x - μ(x, w)) * w * (y - μ(y, w))'
+  	sum(each, zip(eachcol(x), eachcol(y), w))
+      end
+  end;
+  Σ(e::MonteCarlo) = Σ(Iterators.repeated(1/sz(e)))
+  Σ(e::SigmaPoint) = Σ([e.w₀; repeat([(1 - e.w₀) / (sz(e) - 1)], 4)])
+#+end_src
+
+#+begin_src julia :results none
+  xs(m::Nonlinear) = ys -> hcat(inv(m).(eachcol(ys))...);
+  ys(m::Model, e::MonteCarlo) = x -> m(x) .+  √cov(m, x) * randn(2, e.n);
+#+end_src
+
+#+begin_comment
+#+begin_src julia :results none
+  struct Radar <: Nonlinear
+      σᵣ::Real
+      σᵩ::Real
+      position::AbstractVector{<:Real}
+  end
+
+  function (m::Radar)(x::AbstractVector, u=0, e=zeros(2))
+      h = x -> [sqrt(x[1]^2 + x[2]^2); atan(x[2], x[1])]
+      h(x .- m.position) + e
+  end
+
+  sz(::Radar) = 2
+
+  inv(m::Radar) = y -> [y[1] * cos(y[2]); y[1] * sin(y[2])] .+ m.position;
+#+end_src
+  
+#+begin_src julia :results none
+  struct Ellipse <: Estimation
+      w₀::Real
+      n::Integer
+      Ellipse() = new(0, 5)
+      Ellipse(n::Integer) = new(0, n)
+      Ellipse(w₀::Real) = new(w₀, 5)
+      Ellipse(w₀, n) = new(w₀, n)
+  end
+#+end_src
+#+end_comment
 
 * Линейный и расширенный фильтры Калмана
 
@@ -244,7 +302,7 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
       ỹ::AbstractVector,
       u = 0) -> let
       x, y, P, S, W = specifics(method, process, measure, P, x, u)
-      F = W * pinv(S) # p(x|y)
+      F = W * pinv(S)
       P = P - F * S * F'
       P, x + F * (ỹ - y)
   end;
@@ -266,9 +324,8 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
 #+end_src
 
 * Задача
-** Постановка
-*** Уравнения движения
-Рассмотрим уравнения движения катера с примерно постоянной угловой скоростью:
+** Модель движения
+Скоростной катер передвигается в море согласно модели постоянного поворота, с ошибками по линейным скоростям и по угловой скорости.  Ошибки по линейным скоростям имеют среднеквадратические отклонения 0.02км/мин, а угловые скорости - среднеквадратическое отклонение 0.001рад/мин.
 
 #+begin_src julia :results none
   struct Boat <: Nonlinear
@@ -289,15 +346,16 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
           0 0 c -s 0;
           0 0 s c 0;
           0 0 0 0 1
-      ] * x + e
+      ] * x
   end
   # noise matrix
-  Q(m::Boat) = Diagonal([0, 0, m.σv, m.σv, m.σω]);
+  Q(m::Boat, _...) = Diagonal([0, 0, m.T * m.σv, m.T * m.σv, m.T * m.σω]);
   # state size
-  sz(::Boat) = 5
+  xsize(::Boat) = 5
 #+end_src
 
-Ф-я построяния графиков
+Ф-я построяния графиков:
+
 #+begin_src julia :results none
   function plot_boat(process, measure, method, P₀, x₀, ys, track)
       
@@ -326,8 +384,9 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
       plot(p1, p3, p5, p2, p4, p6, layout = l)
   end
 #+end_src
-*** Уравнения измерения
-**** Линейная модель измерений в декартовой системе координат
+
+** Модель измерения
+*** Линейная модель измерений в декартовой системе координат :noexport:
 #+begin_src julia :results none
   struct BoatMeasure <: Linear
   	σₓ::Real # 0.8 [m]
@@ -351,48 +410,30 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
 
   [[./images/boat_linmeas.png]]
 
-**** Измерение с помощью одного радара
+*** Измерение с помощью одного радара
+
+Радар имеет в диапазоне наблюдений среднеквадратическое отклонение по расстоянию 0.9 км, а среднеквадратическое отклонение по углу в силу особенностей конструкции зависит от расстояния от радара до цели: оно определяется как 0.01 рад, деленное на квадратный корень из расстояния.
 
 #+begin_src julia :results none
   struct Radar <: Nonlinear
-      σr::Real
-      σϕ::Real
+      σᵣ::Real
+      σᵩ::Real
       position::AbstractVector{<:Real}
   end
 
   function (m::Radar)(x::AbstractVector{<:Real}, u=0, e=zeros(2))
       h = x -> [sqrt(x[1]^2 + x[2]^2); atan(x[2], x[1])]
       r, ϕ = h(x[1:2] .- m.position)
-      [r + e[1], ϕ + e[2] / r]
+      [r + m.σᵣ * e[1], ϕ + m.σᵩ * e[2] / (r + .01)] #adding small number to r to prevent division by zero
   end
-      
-  Q(c::Radar, _...) = Diagonal([c.σr, c.σϕ]);
 
-  sz(::Radar) = 2
+  xsize(::Radar) = 2
+  esize(::Radar) = 2
 #+end_src
 
-#+begin_src julia :results none
-    let radar = Radar(1, 0.02, [0,0])
-        turntrack = CSV.File("../data/trackturn.csv"; header=false) |> Tables.matrix
-        turnobservations = CSV.File("../data/observationscoord.csv";
-                                    header=false) |> Tables.matrix
-        radar_meas = hcat(radar.(eachrow(turntrack[:,1:2]))...) +
-            Q(radar).^2 * randn(2, size(turntrack, 1))
-        plot_boat(Boat(0.2, 0.001, 0.5), radar, LinearKalman(),
-                 I(5), [20.0, 10.0, 0.15, 0.35, 0.501],
-                 radar_meas', turntrack)
+*** Измерение двумя радарами с нелинейной моделью ошибок
 
-        savefig("./images/boat_radar.png")
-    end
-#+end_src
-
-[[./images/boat_radar.png]]
-
-**** Измерение двумя радарами с нелинейной моделью ошибок
-Рассмотрим нелинейную модель измерения положения с помощью радара:
-
-
-Опишем модель измерения с помощью двух радаров
+За катером наблюдают два радара на удалении 10км друг от друга. Положение первого радара принимается за начало координат, направление на второй - осью абсцисс.  Наблюдения проводились через равные промежутки времени дважды в минуту в течении 5 часов.
 
 #+begin_src julia :results none
   struct DoubleRadar <: Nonlinear
@@ -403,13 +444,16 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
   (m::DoubleRadar)(x::AbstractVector{<:Real}, u=0, e=zeros(4)) =
       [m.r₁(x, u, e[1:2]); m.r₂(x, u, e[3:4])]
 
-  Q(m::DoubleRadar, _...) = Diagonal([diag(Q(m.r₁)); diag(Q(m.r₂))])
+  Q(m::DoubleRadar, x, u) = Diagonal([diag(Q(m.r₁, x, u)); diag(Q(m.r₂, x, u))])
 
-  sz(::DoubleRadar) = 4
+  xsize(::DoubleRadar) = 4
+  esize(::DoubleRadar) = 4
 #+end_src
+#+latex: \clearpage
+Моделирование (см [[fig:30sec]]).
 
-Моделирование
-
+#+caption: Измерение каждые 30 сек.
+#+label: fig:30sec
 #+begin_src julia :results none :cache yes
   plot_boat(Boat(0.02, 0.001, 0.5),
             DoubleRadar(Radar(0.9, 0.01, [0,0]),
@@ -428,3 +472,46 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
 
 [[./images/result.png]]
 
+Измерение раз в 2 минуты (см [[fig:2min]]):
+
+#+begin_src julia :results none :cache yes
+  plot_boat(Boat(0.02, 0.001, 2),
+            DoubleRadar(Radar(0.9, 0.01, [0,0]),
+                        Radar(0.9, 0.01, [10, 0])),
+            LinearKalman(),
+            I(5)*1e-2,
+            [8.1,18.9,0.015,0.025,0.051401],
+            (CSV.File("../data/exam-observations-polar.csv";
+                     header=false) |> Tables.matrix)[begin:4:end,:],
+            (CSV.File("../data/exam-track.csv"; header=false) |>
+                Tables.matrix)[begin:4:end, :])
+
+  savefig("./images/boat_2mins.png")
+#+end_src
+
+#+caption: Измерение раз в 2 минуты
+#+label: fig:2min
+[[./images/boat_2mins.png]]
+
+Измерение раз в 5 минут (см [[fig:5min]]):
+
+#+begin_src julia :results none :cache yes
+  plot_boat(Boat(0.02, 0.001, 5),
+            DoubleRadar(Radar(0.9, 0.01, [0,0]),
+                        Radar(0.9, 0.01, [10, 0])),
+            LinearKalman(),
+            I(5)*1e-2,
+            [8.1,18.9,0.015,0.025,0.051401],
+            (CSV.File("../data/exam-observations-polar.csv";
+                     header=false) |> Tables.matrix)[begin:10:end,:],
+            (CSV.File("../data/exam-track.csv"; header=false) |>
+                Tables.matrix)[begin:10:end, :])
+
+  savefig("./images/boat_5mins.png")
+#+end_src
+
+#+caption: Измерение раз в 5 минут
+#+label: fig:5min
+[[./images/boat_5mins.png]]
+
+При уменьшении частоты наблюдений визуально количество шума снижается (что немного странно). Так же ухудшается оценка, особенно по угловой скорости (что ожидаемо). В то же время стоит отметить, что фильтр очень чувствителен к начальным условиям. Остается открытым вопрос его работоспособности, если начальные условия заранее неизвестны.
