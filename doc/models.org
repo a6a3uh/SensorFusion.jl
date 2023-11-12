@@ -46,7 +46,7 @@
 
 где $x$ - состояние (случайный вектор) $u$ - (опциональное) управление (для простоты примем его детерминированным), $v$- случайный вектор (шум, возмущение), $A$, $B$, $Q$ - матрицы. Индексами сверху показаны размерности.
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   abstract type Model end
   abstract type Linear <: Model end
 
@@ -54,11 +54,17 @@
   (m::Linear)(x::AbstractVector{<:Real}, u=0, _...) =
       A(m) * x .+ B(m) * u
 
+  "State matrix"
+  A(::Linear) = missing
+
   "Control matrix"
   B(::Linear) = 0
 
+  Q(::Linear) = missing
+
   "Model size"
   xsize(m::Linear) = size(A(m), 1)
+  esize(m::Linear) = missing
 #+end_src
 
 Случайная величина $v$ задается выражением:
@@ -76,7 +82,7 @@ v^{l} = Q^{l \times p}  e^p ,
 Cov(v) = Q \cdot Q^T 
 \end{equation}
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   cov(m::Model, x, u) = Q(m, x, u) * Q(m, x, u)'
 #+end_src
 
@@ -88,7 +94,7 @@ Cov(y) = A \cdot P \cdot A + Cov(v) ,
 
 где $P$ - матрица ковариации случайной величины $x$.
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   "Covariance propagation common formula for linear
   and linearized systems"
   (m::Model)(P::AbstractMatrix, x, u=0) =
@@ -97,7 +103,7 @@ Cov(y) = A \cdot P \cdot A + Cov(v) ,
 
 ** Нелинейная модель и ее линеаризация
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   abstract type Nonlinear <: Model end
 #+end_src
 
@@ -113,7 +119,7 @@ x=f(x, u, v)
 A=\frac{\partial}{\partial x} f(x, u, 0) .
 \end{equation}
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   "Linearized state matrix"
   A(m::Nonlinear, x, u=0) =
       ForwardDiff.jacobian(x->m(x, u), x)
@@ -125,7 +131,7 @@ A=\frac{\partial}{\partial x} f(x, u, 0) .
 B = \frac{\partial}{\partial u} f(x, u, 0).
 \end{equation}
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   "Linearized control matrix"
   B(m::Nonlinear, x, u=0) =
       ForwardDiff.jacobian(x->m(x, u), u)
@@ -137,7 +143,7 @@ B = \frac{\partial}{\partial u} f(x, u, 0).
 Q = \frac{\partial}{\partial v} f(x, u, 0) .
 \end{equation}
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Models.jl
   Q(m::Nonlinear, x, u=0) =
       ForwardDiff.jacobian(e->m(x, u, e), zeros(esize(m)))
 #+end_src
@@ -241,7 +247,7 @@ y_k = C x_k + D u_k + \epsilon_k
 
 * Линейный и расширенный фильтры Калмана
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Kalman.jl
   abstract type Kalman end
   struct LinearKalman <: Kalman end
 #+end_src
@@ -253,9 +259,9 @@ y_k = C x_k + D u_k + \epsilon_k
 W = P C^T .
 \end{equation}
 
-#+begin_src julia :results none
-    "Part of Kalman filter common for
-    model based (KF, EKF) and sampling based (UKF)
+#+begin_src julia :results none :tangle ../src/Kalman.jl
+    "Part of Kalman filter specific for
+    model based (KF, EKF) and not sampling based like (UKF)
     cov propagation"
     function specifics(
             method::LinearKalman,
@@ -294,7 +300,7 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
 
 где $\tilde y$ - измерение.
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Kalman.jl
   "Update function of Kalman filters"
   update(process, measure, method) = (
       P::AbstractMatrix,
@@ -310,7 +316,7 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
 
 Функция, оценивающая итеративно состояние по наблюдениям (возвращает матрицы ковариации и состояния для всех шагов):
 
-#+begin_src julia :results none
+#+begin_src julia :results none :tangle ../src/Kalman.jl
   function estimate(process::Model,
                     measure::Model,
                     method::Kalman,
