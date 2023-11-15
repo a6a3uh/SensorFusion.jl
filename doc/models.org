@@ -55,16 +55,16 @@
       A(m) * x .+ B(m) * u
 
   "State matrix"
-  A(::Linear) = missing
+  A(::Linear, _...) = missing
 
   "Control matrix"
-  B(::Linear) = 0
+  B(::Linear, _...) = 0
 
-  Q(::Linear) = missing
+  Q(::Linear, _...) = missing
 
   "Model size"
-  xsize(m::Linear) = size(A(m), 1)
-  esize(m::Linear) = missing
+  xsize(m::Linear) = size(A(m), 2)
+  esize(m::Linear) = size(Q(m), 2)
 #+end_src
 
 Случайная величина $v$ задается выражением:
@@ -83,7 +83,7 @@ Cov(v) = Q \cdot Q^T
 \end{equation}
 
 #+begin_src julia :results none :tangle ../src/Models.jl
-  cov(m::Model, x, u) = Q(m, x, u) * Q(m, x, u)'
+  cov(m::Model, x, u=0) = Q(m, x, u) * Q(m, x, u)'
 #+end_src
 
 Матрица ковариации случайной величины $y$ будет иметь вид
@@ -98,7 +98,7 @@ Cov(y) = A \cdot P \cdot A + Cov(v) ,
   "Covariance propagation common formula for linear
   and linearized systems"
   (m::Model)(P::AbstractMatrix, x, u=0) =
-      A(m, x, u) * P * A(m, x, u)' + cov(m, x, u)
+      A(m, x, u) * P * A(m, x, u)' .+ cov(m, x, u) # broadcasting for scalar A * P * A' case
 #+end_src
 
 ** Нелинейная модель и ее линеаризация
@@ -146,6 +146,8 @@ Q = \frac{\partial}{\partial v} f(x, u, 0) .
 #+begin_src julia :results none :tangle ../src/Models.jl
   Q(m::Nonlinear, x, u=0) =
       ForwardDiff.jacobian(e->m(x, u, e), zeros(esize(m)))
+
+  esize(m::Nonlinear) = missing
 #+end_src
 
 ** Процесс
@@ -310,7 +312,7 @@ x_k = x_{k|k-1} + F (\tilde y - y_k) ,
       x, y, P, S, W = specifics(method, process, measure, P, x, u)
       F = W * pinv(S)
       P = P - F * S * F'
-      P, x + F * (ỹ - y)
+      P, x + F * (ỹ .- y) # broadcasting for scalar measurements
   end;
 #+end_src
 

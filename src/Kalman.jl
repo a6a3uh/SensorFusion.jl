@@ -28,7 +28,7 @@ update(process, measure, method) = (
     x, y, P, S, W = specifics(method, process, measure, P, x, u)
     F = W * pinv(S)
     P = P - F * S * F'
-    P, x + F * (ỹ - y)
+    P, x + F * (ỹ .- y) # broadcasting for scalar measurements
 end;
 
 function estimate(process::Model,

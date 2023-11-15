@@ -6,23 +6,23 @@ abstract type Linear <: Model end
     A(m) * x .+ B(m) * u
 
 "State matrix"
-A(::Linear) = missing
+A(::Linear, _...) = missing
 
 "Control matrix"
-B(::Linear) = 0
+B(::Linear, _...) = 0
 
-Q(::Linear) = missing
+Q(::Linear, _...) = missing
 
 "Model size"
-xsize(m::Linear) = size(A(m), 1)
-esize(m::Linear) = missing
+xsize(m::Linear) = size(A(m), 2)
+esize(m::Linear) = size(Q(m), 2)
 
-cov(m::Model, x, u) = Q(m, x, u) * Q(m, x, u)'
+cov(m::Model, x, u=0) = Q(m, x, u) * Q(m, x, u)'
 
 "Covariance propagation common formula for linear
 and linearized systems"
 (m::Model)(P::AbstractMatrix, x, u=0) =
-    A(m, x, u) * P * A(m, x, u)' + cov(m, x, u)
+    A(m, x, u) * P * A(m, x, u)' .+ cov(m, x, u) # broadcasting for scalar A * P * A' case
 
 abstract type Nonlinear <: Model end
 
@@ -36,3 +36,5 @@ B(m::Nonlinear, x, u=0) =
 
 Q(m::Nonlinear, x, u=0) =
     ForwardDiff.jacobian(e->m(x, u, e), zeros(esize(m)))
+
+esize(m::Nonlinear) = missing
