@@ -51,7 +51,7 @@
   abstract type Linear <: Model end
 
   "Linear system equation"
-  (m::Linear)(x::AbstractVector{<:Real}, u=0, _...) =
+  (m::Linear)(x::AbstractVector{<:Real}, u=0) =
       A(m) * x .+ B(m) * u
 
   "State matrix"
