@@ -5,7 +5,7 @@ struct LinearKalman <: Kalman end
 model based (KF, EKF) and not sampling based like (UKF)
 cov propagation"
 function specifics(
-        method::LinearKalman,
+        ::LinearKalman,
         process::Model,
         measure::Model,
         P::AbstractMatrix,
@@ -13,9 +13,9 @@ function specifics(
         u=0)
     x = process(x, u)
     y = measure(x, u)
-    P = process(P, x)
-    S = measure(P, x)
-    W = P * A(measure, x)' # measurement model's A is actually C
+    P = process(P, x, u)
+    S = measure(P, x, u)
+    W = P * A(measure, x, u)' # measurement model's A is actually C
     (;x, y, P, S, W)
 end
 
@@ -24,14 +24,14 @@ update(process, measure, method) = (
     P::AbstractMatrix,
     x::AbstractVector,
     ỹ::AbstractVector,
-    u = 0) -> let
+    u = zeros(usize(process))) -> let
     x, y, P, S, W = specifics(method, process, measure, P, x, u)
     F = W * pinv(S)
     P = P - F * S * F'
-    P, x + F * (ỹ .- y) # broadcasting for scalar measurements
+    P, x + F * (ỹ - y) # broadcasting for scalar measurements
 end;
 
-function estimate(process::Model,
+function estimate_batch(process::Model,
                   measure::Model,
                   method::Kalman,
                   P₀, x₀, ys,
