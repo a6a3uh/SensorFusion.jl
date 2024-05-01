@@ -1,21 +1,28 @@
+export Kalman, LinearKalman
+export specifics, update, estimate_batch
+export measurement
+    
 abstract type Kalman end
 struct LinearKalman <: Kalman end
+
+measurement(::Model, y) = Vector(y)
 
 "Part of Kalman filter specific for
 model based (KF, EKF) and not sampling based like (UKF)
 cov propagation"
 function specifics(
-        ::LinearKalman,
-        process::Model,
-        measure::Model,
-        P::AbstractMatrix,
-        x::AbstractVector,
-        u=0)
-    x = process(x, u)
-    y = measure(x, u)
-    P = process(P, x, u)
-    S = measure(P, x, u)
-    W = P * A(measure, x, u)' # measurement model's A is actually C
+    ::LinearKalman,
+    process::Model,
+    measure::Model,
+    P::AbstractMatrix,
+    x::AbstractVector,
+    ỹ::AbstractVector,
+    u=0)
+    x = process(x, u, ỹ)
+    y = measure(x, u, ỹ)
+    P = process(P, x, u, ỹ)
+    S = measure(P, x, u, ỹ)
+    W = P * A(measure, x, u, ỹ)' # measurement model's A is actually C
     (;x, y, P, S, W)
 end
 
@@ -25,7 +32,7 @@ update(process, measure, method) = (
     x::AbstractVector,
     ỹ::AbstractVector,
     u = zeros(usize(process))) -> let
-    x, y, P, S, W = specifics(method, process, measure, P, x, u)
+    x, y, P, S, W = specifics(method, process, measure, P, x, ỹ, u)
     F = W * pinv(S)
     P = P - F * S * F'
     P, x + F * (ỹ - y) # broadcasting for scalar measurements
