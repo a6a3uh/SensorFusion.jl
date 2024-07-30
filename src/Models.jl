@@ -20,7 +20,7 @@ A(::Linear; _...) = missing
 "Control matrix"
 B(::Linear; _...) = 0
 
-Q(::Linear; _...) = missing
+Q(::Linear; _...) = 0
 
 "Model size"
 xsize(m::Linear) = size(A(m), 2)
