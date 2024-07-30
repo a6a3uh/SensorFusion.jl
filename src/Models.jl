@@ -10,9 +10,9 @@ abstract type Linear <: Model end
 (m::Linear)(;
             x=zeros(xsize(m)),
             u=zeros(usize(m)),
-            y =  zeros(ysize(m)),
+            y=zeros(ysize(m)),
             e=zeros(esize(m))) =
-    A(m, x, u, y) * x .+ B(m, x, u, y) * u .+ Q(m, x, u, y) * e
+    A(m; x, u, y) * x .+ B(m; x, u, y) * u .+ Q(m; x, u, y) * e
 
 "State matrix"
 A(::Linear; _...) = missing
@@ -29,12 +29,12 @@ usize(m::Linear) = size(B(m), 2)
 ysize(m::Linear) = size(A(m) ,1)
 
 cov(m::Model; x=zeros(xsize(m)), u=zeros(usize(m)), y=zeros(ysize(m))) =
-    Q(m, x, u, y) * Q(m, x, u, y)'
+    Q(m; x, u, y) * Q(m; x, u, y)'
 
 "Covariance propagation common formula for linear
 and linearized systems"
 (m::Model)(P::AbstractMatrix, x=zeros(xsize(m)), u=zeros(usize(m)), y=zeros(ysize(m))) =
-    A(m, x, u, y) * P * A(m, x, u, y)' .+ cov(m, x, u, y) # broadcasting for scalar A * P * A' case
+    A(m; x, u, y) * P * A(m; x, u, y)' .+ cov(m; x, u, y) # broadcasting for scalar A * P * A' case
 
 abstract type Nonlinear <: Model end
 

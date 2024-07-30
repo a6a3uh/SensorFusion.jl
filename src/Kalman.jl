@@ -1,9 +1,31 @@
-export Kalman, LinearKalman
+export AbstractEstimator, AbstractEstimated
+export DefaultEstimator, DefaultEstimated
+export KalmanEstimator, LinearKalman
 export specifics, update, estimate_batch
 export measurement
+export estimated
     
-abstract type Kalman end
-struct LinearKalman <: Kalman end
+abstract type AbstractEstimator end
+struct DefaultEstimator <: AbstractEstimator end
+abstract type KalmanEstimator <: AbstractEstimator end
+struct LinearKalman <: KalmanEstimator end
+
+abstract type AbstractEstimated{T} end
+struct DefaultEstimated{T} <: AbstractEstimated{T}
+    x::AbstractVector{T}
+end
+DefaultEstimated(T::Type) = DefaultEstimated(T[])
+
+struct KalmanEstimated{T} <: AbstractEstimated{T}
+    P::AbstractMatrix{T}
+    x::AbstractVector{T}
+end
+
+estimated(::DefaultEstimator) = DefaultEstimated
+estimated(::KalmanEstimator) = KalmanEstimated
+
+# abstract type Kalman end
+# struct LinearKalman <: Kalman end
 
 measurement(::Model, y) = Vector(y)
 
@@ -16,18 +38,18 @@ function specifics(
     measure::Model,
     P::AbstractMatrix,
     x::AbstractVector,
-    ỹ::AbstractVector,
+    y::AbstractVector,
     u=0)
-    x = process(x, u, ỹ)
-    y = measure(x, u, ỹ)
-    P = process(P, x, u, ỹ)
-    S = measure(P, x, u, ỹ)
-    W = P * A(measure, x, u, ỹ)' # measurement model's A is actually C
+    x = process(;x, u, y)
+    P = process(P, x, u, y)
+    S = measure(P, x, u, y)
+    W = P * A(measure; x, u, y)' # measurement model's A is actually C
+    y = measure(;x, u, y)
     (;x, y, P, S, W)
 end
 
 "Update function of Kalman filters"
-update(process, measure, method) = (
+update(process::Model, measure::Model, method::KalmanEstimator) = (
     P::AbstractMatrix,
     x::AbstractVector,
     ỹ::AbstractVector,
@@ -35,12 +57,12 @@ update(process, measure, method) = (
     x, y, P, S, W = specifics(method, process, measure, P, x, ỹ, u)
     F = W * pinv(S)
     P = P - F * S * F'
-    P, x + F * (ỹ - y) # broadcasting for scalar measurements
+    P, x + F * (measurement(measure, ỹ) - y) # broadcasting for scalar measurements
 end;
 
 function estimate_batch(process::Model,
                   measure::Model,
-                  method::Kalman,
+                  method::KalmanEstimator,
                   P₀, x₀, ys,
                   us=Iterators.repeated(0))
     P, x = zip(ys, us) |> Scan(
