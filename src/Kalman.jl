@@ -8,7 +8,7 @@ export estimated
 abstract type AbstractEstimator end
 struct DefaultEstimator <: AbstractEstimator end
 abstract type KalmanEstimator <: AbstractEstimator end
-struct LinearKalman <: KalmanEstimator end
+abstract type LinearKalman <: KalmanEstimator end
 
 abstract type AbstractEstimated{T} end
 struct DefaultEstimated{T} <: AbstractEstimated{T}
@@ -16,7 +16,7 @@ struct DefaultEstimated{T} <: AbstractEstimated{T}
 end
 DefaultEstimated(T::Type) = DefaultEstimated(T[])
 
-struct KalmanEstimated{T} <: AbstractEstimated{T}
+mutable struct KalmanEstimated{T} <: AbstractEstimated{T}
     P::AbstractMatrix{T}
     x::AbstractVector{T}
 end
@@ -50,14 +50,16 @@ end
 
 "Update function of Kalman filters"
 update(process::Model, measure::Model, method::KalmanEstimator) = (
-    P::AbstractMatrix,
-    x::AbstractVector,
+    x::KalmanEstimated,
+    # P::AbstractMatrix,
+    # x::AbstractVector,
     ỹ::AbstractVector,
     u = zeros(usize(process))) -> let
-    x, y, P, S, W = specifics(method, process, measure, P, x, ỹ, u)
+    x, y, P, S, W = specifics(method, process, measure, x.P, x.x, ỹ, u)
     F = W * pinv(S)
-    P = P - F * S * F'
-    P, x + F * (measurement(measure, ỹ) - y) # broadcasting for scalar measurements
+    P -= F * S * F'
+    x += F * (measurement(measure, ỹ) - y) # broadcasting for scalar measurements
+    KalmanEstimated(P, x)
 end;
 
 function estimate_batch(process::Model,
