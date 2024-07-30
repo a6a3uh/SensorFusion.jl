@@ -4,6 +4,9 @@ export KalmanEstimator, LinearKalman
 export specifics, update, estimate_batch
 export measurement
 export estimated
+export modelproc, modelmeas
+export initestim
+export scanestimator
     
 abstract type AbstractEstimator end
 struct DefaultEstimator <: AbstractEstimator end
@@ -15,19 +18,19 @@ struct DefaultEstimated{T} <: AbstractEstimated{T}
     x::AbstractVector{T}
 end
 DefaultEstimated(T::Type) = DefaultEstimated(T[])
+estimated(::DefaultEstimator) = DefaultEstimated
 
 mutable struct KalmanEstimated{T} <: AbstractEstimated{T}
     P::AbstractMatrix{T}
     x::AbstractVector{T}
 end
-
-estimated(::DefaultEstimator) = DefaultEstimated
 estimated(::KalmanEstimator) = KalmanEstimated
 
-# abstract type Kalman end
-# struct LinearKalman <: Kalman end
-
 measurement(::Model, y) = Vector(y)
+modelproc(::AbstractEstimator)::Model = missing
+modelmeas(::AbstractEstimator)::Model = missing
+initestim(e::LinearKalman) = KalmanEstimated(
+    I(xsize(modelproc(e))), zeros(xsize(modelproc(e))))
 
 "Part of Kalman filter specific for
 model based (KF, EKF) and not sampling based like (UKF)
@@ -49,26 +52,26 @@ function specifics(
 end
 
 "Update function of Kalman filters"
-update(process::Model, measure::Model, method::KalmanEstimator) = (
+update(e::KalmanEstimator) = (
     x::KalmanEstimated,
-    # P::AbstractMatrix,
-    # x::AbstractVector,
     ỹ::AbstractVector,
-    u = zeros(usize(process))) -> let
-    x, y, P, S, W = specifics(method, process, measure, x.P, x.x, ỹ, u)
+    u = zeros(usize(modelproc(e)))) -> let
+        x, y, P, S, W = specifics(
+            e,
+            modelproc(e),
+            modelmeas(e), x.P, x.x, ỹ, u)
     F = W * pinv(S)
     P -= F * S * F'
-    x += F * (measurement(measure, ỹ) - y) # broadcasting for scalar measurements
+    x += F * (measurement(modelmeas(e), ỹ) - y) # broadcasting for scalar measurements
     KalmanEstimated(P, x)
 end;
 
-function estimate_batch(process::Model,
-                  measure::Model,
-                  method::KalmanEstimator,
-                  P₀, x₀, ys,
-                  us=Iterators.repeated(0))
-    P, x = zip(ys, us) |> Scan(
-	(P₀, x₀)) do (P, x), (y, u) 
-	    update(process, measure, method)(P, x, y, u)
-	end |> xs -> zip(xs...) |> collect
+function scanestimator(e::KalmanEstimator; y, u=Iterators.repeated(0.0))
+    out = zip(y, u) |> Scan(initestim(e)) do x, (y, u)
+        update(e)(x, y, u)
+    end
+    x = [e.x for e in out]
+    P = [e.P for e in out]
+    (;P, x)
 end
+
