@@ -26,7 +26,7 @@ mutable struct KalmanEstimated{T} <: AbstractEstimated{T}
 end
 estimated(::KalmanEstimator) = KalmanEstimated
 
-measurement(::Model, y) = Vector(y)
+measurement(::AbstractEstimator, y) = Vector(y)
 modelproc(::AbstractEstimator)::Model = missing
 modelmeas(::AbstractEstimator)::Model = missing
 initestim(e::LinearKalman) = KalmanEstimated(
@@ -62,7 +62,7 @@ update(e::KalmanEstimator) = (
             modelmeas(e), x.P, x.x, ỹ, u)
     F = W * pinv(S)
     P -= F * S * F'
-    x += F * (measurement(modelmeas(e), ỹ) - y) # broadcasting for scalar measurements
+    x += F * (measurement(e, ỹ) - y) # broadcasting for scalar measurements
     KalmanEstimated(P, x)
 end;
 
