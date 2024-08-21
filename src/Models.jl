@@ -1,10 +1,13 @@
-export Model, Linear, Nonlinear
+export Model, Linear, Nonlinear, DefaultModel
 export xsize, esize, usize, ysize
 export A, B, Q, cov
+export state_fields, meas_fields
 
 abstract type Model end
 abstract type Linear <: Model end
 
+state_fields(::Model) = missing
+meas_fields(::Model) = missing
 
 "Linear system equation"
 (m::Linear)(;
@@ -18,15 +21,15 @@ abstract type Linear <: Model end
 A(::Linear; _...) = missing
 
 "Control matrix"
-B(::Linear; _...) = 0
+B(m::Linear; _...) = 0#zeros(ysize(m), usize(m))
 
-Q(::Linear; _...) = 0
+Q(m::Linear; _...) = 0# zeros(ysize(m), esize(m))
 
 "Model size"
 xsize(m::Linear) = size(A(m), 2)
 esize(m::Linear) = size(Q(m), 2)
 usize(m::Linear) = size(B(m), 2)
-ysize(m::Linear) = size(A(m) ,1)
+ysize(m::Linear) = xsize(m)
 
 cov(m::Model; x=zeros(xsize(m)), u=zeros(usize(m)), y=zeros(ysize(m))) =
     Q(m; x, u, y) * Q(m; x, u, y)'
@@ -37,6 +40,9 @@ and linearized systems"
     A(m; x, u, y) * P * A(m; x, u, y)' .+ cov(m; x, u, y) # broadcasting for scalar A * P * A' case
 
 abstract type Nonlinear <: Model end
+
+struct DefaultModel <: Nonlinear end
+(::DefaultModel)(;x, _...) = x
 
 "Linearized state matrix"
 A(m::Nonlinear; x=zeros(xsize(m)), u=zeros(usize(m)), y=zeros(ysize(m))) =

@@ -1,11 +1,11 @@
 export AbstractEstimator, AbstractEstimated
 export DefaultEstimator, DefaultEstimated
-export KalmanEstimator, LinearKalman
-export specifics, update, estimate_batch
+export KalmanEstimator, LinearKalman, KalmanEstimated
+export specifics, estimate
 export measurement
 export estimated
 export modelproc, modelmeas
-export initestim
+export initestim, initcontrol
 export scanestimator
     
 abstract type AbstractEstimator end
@@ -17,8 +17,9 @@ abstract type AbstractEstimated{T} end
 struct DefaultEstimated{T} <: AbstractEstimated{T}
     x::AbstractVector{T}
 end
-DefaultEstimated(T::Type) = DefaultEstimated(T[])
 estimated(::DefaultEstimator) = DefaultEstimated
+initestim(e::DefaultEstimator, v::AbstractVector{T}=[]) where T = estimated(e)(v)
+initcontrol(::DefaultEstimator) = []
 
 mutable struct KalmanEstimated{T} <: AbstractEstimated{T}
     P::AbstractMatrix{T}
@@ -29,8 +30,11 @@ estimated(::KalmanEstimator) = KalmanEstimated
 measurement(::AbstractEstimator, y) = Vector(y)
 modelproc(::AbstractEstimator)::Model = missing
 modelmeas(::AbstractEstimator)::Model = missing
-initestim(e::LinearKalman) = KalmanEstimated(
-    I(xsize(modelproc(e))), zeros(xsize(modelproc(e))))
+
+initestim(e::LinearKalman, v::AbstractVector{T}) where T = estimated(e)(T.(I(length(v)) * 1e6), v)
+initestim(e::LinearKalman, v::AbstractVector{Particles{T}}) where T = estimated(e)(T.(I(length(v)) * 1e6) .+ 0 .* Particles.(eltype(v).parameters[2]), v)
+initestim(e::LinearKalman) = initestim(e, zeros(xsize(modelproc(e))))
+initcontrol(e::KalmanEstimator) = zeros(usize(modelproc(e)))
 
 "Part of Kalman filter specific for
 model based (KF, EKF) and not sampling based like (UKF)
@@ -42,7 +46,7 @@ function specifics(
     P::AbstractMatrix,
     x::AbstractVector,
     y::AbstractVector,
-    u=0)
+    u=zeros(usize(modelproc(e))))
     x = process(;x, u, y)
     P = process(P, x, u, y)
     S = measure(P, x, u, y)
@@ -52,26 +56,38 @@ function specifics(
 end
 
 "Update function of Kalman filters"
-update(e::KalmanEstimator) = (
-    x::KalmanEstimated,
-    ỹ::AbstractVector,
-    u = zeros(usize(modelproc(e)))) -> let
-        x, y, P, S, W = specifics(
-            e,
-            modelproc(e),
-            modelmeas(e), x.P, x.x, ỹ, u)
+function estimate(e::KalmanEstimator,
+                  x::KalmanEstimated{T},
+                  ỹ::AbstractVector{T},
+                  u::AbstractVector{T} =
+                      zeros(usize(modelproc(e)))) where T
+    V = typeof(x.x)
+    x, y, P, S, W = specifics(
+        e,
+        modelproc(e),
+        modelmeas(e), x.P, x.x, ỹ, u)
     F = W * pinv(S)
     P -= F * S * F'
     x += F * (measurement(e, ỹ) - y) # broadcasting for scalar measurements
-    KalmanEstimated(P, x)
-end;
+    KalmanEstimated(P, V(x))
+end
 
-function scanestimator(e::KalmanEstimator; y, u=Iterators.repeated(0.0))
-    out = zip(y, u) |> Scan(initestim(e)) do x, (y, u)
-        update(e)(x, y, u)
+function scanestimator(
+    e::KalmanEstimator;
+    y,
+    u=Iterators.repeated(initcontrol(e)),
+    init=initestim(e))
+    out = zip(y, u) |> Scan(init) do x, (y, u)
+        estimate(e, x, y, u)
     end
     x = [e.x for e in out]
     P = [e.P for e in out]
     (;P, x)
 end
 
+function estimate(::AbstractEstimator, 
+                  ::AbstractEstimated{T},
+                  y::AbstractVector{T},
+                  ::AbstractVector{T}) where T
+    DefaultEstimated(y)
+end
