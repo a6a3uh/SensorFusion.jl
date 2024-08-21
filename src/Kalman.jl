@@ -47,7 +47,8 @@ function specifics(
     x::AbstractVector,
     y::AbstractVector,
     u=zeros(usize(modelproc(e))))
-    x = process(;x, u, y)
+    V = typeof(x)
+    x = V(process(;x, u, y))
     P = process(P, x, u, y)
     S = measure(P, x, u, y)
     W = P * A(measure; x, u, y)' # measurement model's A is actually C

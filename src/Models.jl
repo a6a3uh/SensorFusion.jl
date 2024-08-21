@@ -1,13 +1,10 @@
 export Model, Linear, Nonlinear, DefaultModel
 export xsize, esize, usize, ysize
 export A, B, Q, cov
-export state_fields, meas_fields
 
 abstract type Model end
 abstract type Linear <: Model end
 
-state_fields(::Model) = missing
-meas_fields(::Model) = missing
 
 "Linear system equation"
 (m::Linear)(;
