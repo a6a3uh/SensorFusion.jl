@@ -36,40 +36,30 @@ initestim(e::LinearKalman, v::AbstractVector{Particles{T}}) where T = estimated(
 initestim(e::LinearKalman) = initestim(e, zeros(xsize(modelproc(e))))
 initcontrol(e::KalmanEstimator) = zeros(usize(modelproc(e)))
 
-"Part of Kalman filter specific for
-model based (KF, EKF) and not sampling based like (UKF)
-cov propagation"
-function specifics(
-    ::LinearKalman,
-    process::Model,
-    measure::Model,
-    P::AbstractMatrix,
-    x::AbstractVector,
-    y::AbstractVector,
-    u=zeros(usize(modelproc(e))))
-    V = typeof(x)
-    x = V(process(;x, u, y))
-    P = process(P, x, u, y)
-    S = measure(P, x, u, y)
-    W = P * A(measure; x, u, y)' # measurement model's A is actually C
-    y = measure(;x, u, y)
-    (;x, y, P, S, W)
-end
-
 "Update function of Kalman filters"
 function estimate(e::KalmanEstimator,
                   x::KalmanEstimated{T},
-                  ỹ::AbstractVector{T},
+                  y::AbstractVector{T},
                   u::AbstractVector{T} =
                       zeros(usize(modelproc(e)))) where T
-    V = typeof(x.x)
-    x, y, P, S, W = specifics(
-        e,
-        modelproc(e),
-        modelmeas(e), x.P, x.x, ỹ, u)
-    F = W * pinv(S)
-    P -= F * S * F'
-    x += F * (measurement(e, ỹ) - y) # broadcasting for scalar measurements
+    P = x.P
+    x = x.x
+    V = typeof(x)
+    process = modelproc(e)
+    measure = modelmeas(e)
+    x = V(process(;x, u, y))
+    P = process(P, x, u, y)
+    S = measure(P, x, u, y)
+    C = A(measure; x, u, y) # measurement model's A is actually C
+    z = measure(;x, u, y)
+    K = P * C' * pinv(S)
+    # from above KSK' == PC'K'
+    # == (KCP')' =(P symm)= (KCP)' =(innovaton to P is sym)= KCP
+    # instead of
+    # P -= K * C * P
+    # we write this to retain symmetry and positive definitness
+    P -= K * S * K'
+    x += K * (measurement(e, y) - z)
     KalmanEstimated(P, V(x))
 end
 
