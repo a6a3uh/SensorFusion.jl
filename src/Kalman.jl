@@ -59,6 +59,7 @@ function estimate(e::KalmanEstimator,
     # P -= K * C * P
     # we write this to retain symmetry and positive definitness
     P -= K * S * K'
+    P = (P + P') / 2 # one more time to ensure symmetry of P
     x += K * (measurement(e, y) - z)
     KalmanEstimated(P, V(x))
 end
