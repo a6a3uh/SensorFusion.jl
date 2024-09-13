@@ -53,10 +53,15 @@ function estimate(e::KalmanEstimator,
     C = A(measure; x, u, y) # measurement model's A is actually C
     z = measure(;x, u, y)
     K = P * C' * pinv(S)
+    # K = P * C' / S # not works
+    # K = (pinv(S)' * C * P')' == (pinv(S) * C * P)' == (S \ C * P)' 
+    # K = (S \ C * P)' # not works
+    # K = P * (S \ C)' # not works either
+    #
     # from above KSK' == PC'K'
     # == (KCP')' =(P symm)= (KCP)' =(innovaton to P is sym)= KCP
     # instead of
-    # P -= K * C * P
+    # P -= K * C * P # or equivalently P = (I - KC)P
     # we write this to retain symmetry and positive definitness
     P -= K * S * K'
     P = (P + P') / 2 # one more time to ensure symmetry of P
