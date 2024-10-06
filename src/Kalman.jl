@@ -6,6 +6,7 @@ export KalmanEstimator, LinearKalman, KalmanEstimated
 export modelproc, modelmeas
 export measurement
 export process_update, measurement_update
+export process_update!, measurement_update!, estimate!
     
 abstract type KalmanEstimator <: AbstractEstimator end
 abstract type LinearKalman <: KalmanEstimator end
@@ -33,7 +34,6 @@ function measurement_update(m::Model,
     
     S = m(P, x, u, y)
     C = A(m; x, u, y) # measurement model's A is actually C
-    z = m(;x, u, y)
     K = P * C' * pinv(S)
     # K = P * C' / S # not works
     # K = (pinv(S)' * C * P')' == (pinv(S) * C * P)' == (S \ C * P)' 
@@ -47,14 +47,31 @@ function measurement_update(m::Model,
     # we write this to retain symmetry and positive definitness
     P -= K * S * K'
     P = (P + P') / 2 # one more time to ensure symmetry of P
-    x += K * (measurement(m, y) - z)
+    x += K * (measurement(m, y) - m(;x, u, y))
     KalmanEstimated(P, V(x))
 end
 
-function process_update(m::Model,
-                        x::KalmanEstimated{T},
-                        y::AbstractVector{T}=zeros(T, ysize(m)),
-                        u::AbstractVector{T}=zeros(T, usize(m))) where T
+function measurement_update!(
+    m::Model,
+    z::KalmanEstimated{T},
+    x::KalmanEstimated{T},
+    y::AbstractVector{T},
+    u::AbstractVector{T}=zeros(T, usize(m))) where T
+    S = m(x.P, x.x, u, y)
+    C = A(m; x=x.x, u, y) # measurement model's A is actually C
+    K = x.P * C' * pinv(S)
+    z.P .-= K * S * K'
+    z.P .= (z.P + z.P') / 2 # one more time to ensure symmetry of P
+    z.x .= x
+    z.x += K * (measurement(m, y) - m(;x=x.x, u, y))
+    nothing
+end
+
+function process_update(
+    m::Model,
+    x::KalmanEstimated{T},
+    y::AbstractVector{T}=zeros(T, ysize(m)),
+    u::AbstractVector{T}=zeros(T, usize(m))) where T
     P = x.P
     x = x.x
     V = typeof(x)
@@ -63,6 +80,17 @@ function process_update(m::Model,
     KalmanEstimated(P, x)
 end
     
+function process_update!(
+    m::Model,
+    z::KalmanEstimated{T},                         
+    x::KalmanEstimated{T},
+    y::AbstractVector{T}=zeros(T, ysize(m)),
+    u::AbstractVector{T}=zeros(T, usize(m))) where T
+    model!(m, z.x; x.x, u, y)
+    model!(m, z.P, x.P, x.x, u, y)
+    nothing
+end
+
 "Update function of Kalman filters"
 function estimate(e::KalmanEstimator,
                   x::KalmanEstimated{T},
@@ -72,4 +100,17 @@ function estimate(e::KalmanEstimator,
 
     x = process_update(modelproc(e), x, y, u)
     return measurement_update(modelmeas(e), x, y, u)
+end
+
+function estimate!(e::KalmanEstimator,
+                   zp::KalmanEstimated{T},
+                   zm::KalmanEstimated{T},
+                   x::KalmanEstimated{T},
+                   y::AbstractVector{T},
+                   u::AbstractVector{T} =
+                       zeros(usize(modelproc(e)))) where T
+
+    process_update!(modelproc(e), zp, x, y, u)
+    measurement_update!(modelmeas(e), zm, zp, y, u)
+    nothing
 end

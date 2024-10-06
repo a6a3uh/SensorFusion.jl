@@ -3,16 +3,27 @@ using ForwardDiff
 export Model, Linear, Nonlinear, DefaultModel, ZeroModel
 export xsize, esize, usize, ysize
 export A, B, Q, cov
+export model!
 
 abstract type Model{T} end
 abstract type Linear{T} <: Model{T} end
+
+function model!(m::Model{T}, z::AbstractVector{T};
+                x=zeros(T, xsize(m)),
+                u=zeros(T, usize(m)),
+                y=zeros(T, ysize(m)),
+                e=zeros(T, esize(m))) where T
+    
+    z .= A(m; x, u, y) * x .+ B(m; x, u, y) * u .+ Q(m; x, u, y) * e
+    nothing
+end
 
 "Linear system equation"
 (m::Linear{T})(;
             x=zeros(T, xsize(m)),
             u=zeros(T, usize(m)),
             y=zeros(T, ysize(m)),
-            e=zeros(T, esize(m))) where T=
+            e=zeros(T, esize(m))) where T =
     A(m; x, u, y) * x .+ B(m; x, u, y) * u .+ Q(m; x, u, y) * e
 
 "State matrix"
@@ -38,6 +49,16 @@ ysize(m::Linear) = xsize(m)
 
 cov(m::Model; x=zeros(xsize(m)), u=zeros(usize(m)), y=zeros(ysize(m))) =
     Q(m; x, u, y) * Q(m; x, u, y)'
+
+function model!(m::Model{T}, Z::AbstractMatrix,
+                P::AbstractMatrix,
+                x=zeros(T, xsize(m)),
+                u=zeros(T, usize(m)),
+                y=zeros(T, ysize(m))) where T
+    Z .= A(m; x, u, y) * P * A(m; x, u, y)' .+
+        cov(m; x, u, y) # broadcasting for scalar A * P * A' case
+    nothing
+end
 
 "Covariance propagation common formula for linear
 and linearized systems"
