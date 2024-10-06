@@ -1,57 +1,39 @@
-export AbstractEstimator, AbstractEstimated
-export DefaultEstimator, DefaultEstimated
+include("./Estimator.jl")
+
+using LinearAlgebra
+
 export KalmanEstimator, LinearKalman, KalmanEstimated
-export specifics, estimate
-export measurement
-export estimated
 export modelproc, modelmeas
-export initestim, initcontrol
-export scanestimator
+export measurement
+export process_update, measurement_update
     
-abstract type AbstractEstimator end
-struct DefaultEstimator <: AbstractEstimator end
 abstract type KalmanEstimator <: AbstractEstimator end
 abstract type LinearKalman <: KalmanEstimator end
-
-abstract type AbstractEstimated{T} end
-struct DefaultEstimated{T} <: AbstractEstimated{T}
-    x::AbstractVector{T}
-end
-estimated(::DefaultEstimator) = DefaultEstimated
-initestim(e::DefaultEstimator, v::AbstractVector{T}=[]) where T = estimated(e)(v)
-initcontrol(::DefaultEstimator) = []
 
 mutable struct KalmanEstimated{T} <: AbstractEstimated{T}
     P::AbstractMatrix{T}
     x::AbstractVector{T}
 end
-estimated(::KalmanEstimator) = KalmanEstimated
 
-measurement(::AbstractEstimator, y) = Vector(y)
+function KalmanEstimated(v::AbstractVector{T}) where T
+    KalmanEstimated(T.(I(length(v)) * 1e6), v)
+end
+
 modelproc(::AbstractEstimator)::Model = missing
 modelmeas(::AbstractEstimator)::Model = missing
+measurement(::Model, y) = Vector(y)
 
-initestim(e::LinearKalman, v::AbstractVector{T}) where T = estimated(e)(T.(I(length(v)) * 1e6), v)
-initestim(e::LinearKalman, v::AbstractVector{Particles{T}}) where T = estimated(e)(T.(I(length(v)) * 1e6) .+ 0 .* Particles.(eltype(v).parameters[2]), v)
-initestim(e::LinearKalman) = initestim(e, zeros(xsize(modelproc(e))))
-initcontrol(e::KalmanEstimator) = zeros(usize(modelproc(e)))
-
-"Update function of Kalman filters"
-function estimate(e::KalmanEstimator,
-                  x::KalmanEstimated{T},
-                  y::AbstractVector{T},
-                  u::AbstractVector{T} =
-                      zeros(usize(modelproc(e)))) where T
+function measurement_update(m::Model,
+                            x::KalmanEstimated{T},
+                            y::AbstractVector{T},
+                            u::AbstractVector{T}=zeros(T, usize(m))) where T
     P = x.P
     x = x.x
     V = typeof(x)
-    process = modelproc(e)
-    measure = modelmeas(e)
-    x = V(process(;x, u, y))
-    P = process(P, x, u, y)
-    S = measure(P, x, u, y)
-    C = A(measure; x, u, y) # measurement model's A is actually C
-    z = measure(;x, u, y)
+    
+    S = m(P, x, u, y)
+    C = A(m; x, u, y) # measurement model's A is actually C
+    z = m(;x, u, y)
     K = P * C' * pinv(S)
     # K = P * C' / S # not works
     # K = (pinv(S)' * C * P')' == (pinv(S) * C * P)' == (S \ C * P)' 
@@ -65,26 +47,29 @@ function estimate(e::KalmanEstimator,
     # we write this to retain symmetry and positive definitness
     P -= K * S * K'
     P = (P + P') / 2 # one more time to ensure symmetry of P
-    x += K * (measurement(e, y) - z)
+    x += K * (measurement(m, y) - z)
     KalmanEstimated(P, V(x))
 end
 
-function scanestimator(
-    e::KalmanEstimator;
-    y,
-    u=Iterators.repeated(initcontrol(e)),
-    init=initestim(e))
-    out = zip(y, u) |> Scan(init) do x, (y, u)
-        estimate(e, x, y, u)
-    end
-    x = [e.x for e in out]
-    P = [e.P for e in out]
-    (;P, x)
+function process_update(m::Model,
+                        x::KalmanEstimated{T},
+                        y::AbstractVector{T}=zeros(T, ysize(m)),
+                        u::AbstractVector{T}=zeros(T, usize(m))) where T
+    P = x.P
+    x = x.x
+    V = typeof(x)
+    x = V(m(;x, u, y))
+    P = m(P, x, u, y)
+    KalmanEstimated(P, x)
 end
-
-function estimate(::AbstractEstimator, 
-                  ::AbstractEstimated{T},
+    
+"Update function of Kalman filters"
+function estimate(e::KalmanEstimator,
+                  x::KalmanEstimated{T},
                   y::AbstractVector{T},
-                  ::AbstractVector{T}) where T
-    DefaultEstimated(y)
+                  u::AbstractVector{T} =
+                      zeros(usize(modelproc(e)))) where T
+
+    x = process_update(modelproc(e), x, y, u)
+    return measurement_update(modelmeas(e), x, y, u)
 end
