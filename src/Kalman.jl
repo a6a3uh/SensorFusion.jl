@@ -6,7 +6,7 @@ export KalmanEstimator, LinearKalman, KalmanEstimated
 export modelproc, modelmeas
 export measurement
 export process_update, measurement_update
-export process_update!, measurement_update!, estimate!
+export process_update!, measurement_update!
     
 abstract type KalmanEstimator <: AbstractEstimator end
 abstract type LinearKalman <: KalmanEstimator end
@@ -91,26 +91,3 @@ function process_update!(
     nothing
 end
 
-"Update function of Kalman filters"
-function estimate(e::KalmanEstimator,
-                  x::KalmanEstimated{T},
-                  y::AbstractVector{T},
-                  u::AbstractVector{T} =
-                      zeros(usize(modelproc(e)))) where T
-
-    x = process_update(modelproc(e), x, y, u)
-    return measurement_update(modelmeas(e), x, y, u)
-end
-
-function estimate!(e::KalmanEstimator,
-                   zp::KalmanEstimated{T},
-                   zm::KalmanEstimated{T},
-                   x::KalmanEstimated{T},
-                   y::AbstractVector{T},
-                   u::AbstractVector{T} =
-                       zeros(usize(modelproc(e)))) where T
-
-    process_update!(modelproc(e), zp, x, y, u)
-    measurement_update!(modelmeas(e), zm, zp, y, u)
-    nothing
-end
