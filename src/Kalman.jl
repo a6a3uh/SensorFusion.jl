@@ -34,7 +34,6 @@ function measurements_update(
     H = reduce(vcat, A(m; x, u, y) for (m, y) in zip(ms, ys))
     K = P * reduce(hcat, A(m; x, u, y)' * pinv(m(P; x, u, y)) for (m, y) in zip(ms, ys))
 
-    P -= K * H * P
 
     δxs = map(zip(ms, ys)) do (m, y)
         δy = measurement(m, y) - m(;x, u, y)
@@ -43,6 +42,8 @@ function measurements_update(
         k = P * h' * pinv(s)
         δx = k * δy
     end
+
+    P -= K * H * P
     
     x = x + sum(δxs) 
     KalmanEstimated((P + P') / 2, V(x))
