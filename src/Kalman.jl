@@ -5,7 +5,7 @@ using Models
 
 export KalmanEstimator, LinearKalman, KalmanEstimated
 export measurement
-export process_update, measurement_update, measurements_update
+export process_update, propagate, update
     
 abstract type KalmanEstimator <: AbstractEstimator end
 abstract type LinearKalman <: KalmanEstimator end
@@ -21,38 +21,10 @@ end
 
 measurement(::Model, y) = y
 
-function measurements_update(
-    ms::Vector{Model{T}};
-    x::KalmanEstimated{T},
-    ys,
-    u::AbstractVector{T}=T[0]) where T
-
-    P = x.P
-    x = x.x
-    V = typeof(x)
-    
-    H = reduce(vcat, A(m; x, u, y) for (m, y) in zip(ms, ys))
-    K = P * reduce(hcat, A(m; x, u, y)' * pinv(m(P; x, u, y)) for (m, y) in zip(ms, ys))
-
-
-    δxs = map(zip(ms, ys)) do (m, y)
-        δy = measurement(m, y) - m(;x, u, y)
-        s = m(P; x, u, y)
-        h = A(m; x, u, y)
-        k = P * h' * pinv(s)
-        δx = k * δy
-    end
-
-    P -= K * H * P
-    
-    x = x + sum(δxs) 
-    KalmanEstimated((P + P') / 2, V(x))
-end
-
-function measurement_update(m::Model{T};
-                            x::KalmanEstimated{T},
-                            y::AbstractVector{T},
-                            u::AbstractVector{T}=T[0]) where T
+function update(m::Model{T};
+                x::KalmanEstimated{T},
+                y::AbstractVector{T},
+                u::AbstractVector{T}=T[0]) where T
     P = x.P
     x = x.x
     V = typeof(x)
@@ -67,7 +39,7 @@ function measurement_update(m::Model{T};
     KalmanEstimated((P + P') / 2, V(x))
 end
 
-function process_update(
+function propagate(
     m::Model{T};
     x::KalmanEstimated{T},
     y::AbstractVector{T}=T[],
@@ -79,4 +51,33 @@ function process_update(
     x = V(m(;x, u, y, δt))
     P = m(P; x, u, y, δt)
     KalmanEstimated((P + P') / 2, x)
+end
+
+function update(
+    ms::Vector{<:Model{T}};
+    x::KalmanEstimated{T},
+    ys,
+    u::AbstractVector{T}=T[0]) where T
+
+    P = x.P
+    x = x.x
+    V = typeof(x)
+
+    x, H, HtSi = reduce(zip(ms, ys), init=(x, [], [])) do (x, H, HtSi), (m, y)
+        δy = measurement(m, y) - m(;x, u, y)
+        s = m(P; x, u, y)
+        h = A(m; x, u, y)
+        htsi = h'pinv(s)
+        k = P * htsi
+        δx = k * δy
+        x = V(x + δx)
+        H = length(H) == 0 ? h : vcat(H, h)
+        HtSi = length(HtSi) == 0 ? htsi : hcat(HtSi, htsi)
+        (x, H, HtSi)
+    end
+    K = P * HtSi
+    
+    P -= K * H * P
+    
+    KalmanEstimated((P + P') / 2, V(x))
 end
