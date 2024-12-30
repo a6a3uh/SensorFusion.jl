@@ -5,7 +5,7 @@ using Models
 
 export KalmanEstimator, LinearKalman, KalmanEstimated
 export measurement
-export process_update, propagate, update
+export process_update, propagate, update, update_batch, update_seq
     
 abstract type KalmanEstimator <: AbstractEstimator end
 abstract type LinearKalman <: KalmanEstimator end
@@ -21,63 +21,71 @@ end
 
 measurement(::Model, y) = y
 
-function update(m::Model{T};
-                x::KalmanEstimated{T},
-                y::AbstractVector{T},
-                u::AbstractVector{T}=T[0]) where T
-    P = x.P
-    x = x.x
-    V = typeof(x)
-    
-    S = m(P; x, u, y)
-    H = A(m; x, u, y)
-    K = P * H' * pinv(S)
-    P -= K * S * K'
-    δy = measurement(m, y) - m(;x, u, y)
-    δx = K * δy
-    x = x + δx
-    KalmanEstimated((P + P') / 2, V(x))
-end
-
 function propagate(
     m::Model{T};
-    x::KalmanEstimated{T},
+    e::KalmanEstimated{T},
     y::AbstractVector{T}=T[],
     u::AbstractVector{T}=T[0],
     δt=0.) where T
-    P = x.P
-    x = x.x
-    V = typeof(x)
-    x = V(m(;x, u, y, δt))
-    P = m(P; x, u, y, δt)
+    V = typeof(e.x)
+    x = V(m(;x=e.x, u, y, δt))
+    P = m(e.P; x=e.x, u, y, δt)
     KalmanEstimated((P + P') / 2, x)
+end
+
+function update(m::Model{T};
+                e::KalmanEstimated{T},
+                y::AbstractVector{T},
+                u::AbstractVector{T}=T[0]) where T
+    
+    S = m(e.P; x=e.x, u, y)
+    H = A(m; x=e.x, u, y)
+    K = e.P * H' * pinv(S)
+    P = e.P - K * S * K'
+    δy = measurement(m, y) - m(;x=e.x, u, y)
+    δx = K * δy
+    x = e.x + δx
+    KalmanEstimated((P + P') / 2, typeof(e.x)(x))
 end
 
 function update(
     ms::Vector{<:Model{T}};
-    x::KalmanEstimated{T},
+    e::KalmanEstimated{T},
+    ys,
+    u::AbstractVector{T}=T[0],
+    batch=true) where T
+    batch ? update_batch(ms; e, ys, u) : update_seq(ms; e, ys, u)
+end
+
+function update_seq(
+    ms::Vector{<:Model{T}};
+    e::KalmanEstimated{T},
+    ys,
+    u::AbstractVector{T}=T[0]) where T
+    reduce((e, (m, y)) -> update(m; e, y, u), zip(ms, ys), init=e)
+end
+
+function update_batch(
+    ms::Vector{<:Model{T}};
+    e::KalmanEstimated{T},
     ys,
     u::AbstractVector{T}=T[0]) where T
 
-    P = x.P
-    x = x.x
-    V = typeof(x)
-
-    x, H, HtSi = reduce(zip(ms, ys), init=(x, [], [])) do (x, H, HtSi), (m, y)
-        δy = measurement(m, y) - m(;x, u, y)
-        s = m(P; x, u, y)
+    x, H, HtSi = reduce(zip(ms, ys), init=(e.x, [], [])) do (x, H, HtSi), (m, y)
+        s = m(e.P; x, u, y)
         h = A(m; x, u, y)
         htsi = h'pinv(s)
-        k = P * htsi
+        k = e.P * htsi
+        δy = measurement(m, y) - m(;x, u, y)
         δx = k * δy
-        x = V(x + δx)
+        x = typeof(e.x)(x + δx)
         H = length(H) == 0 ? h : vcat(H, h)
         HtSi = length(HtSi) == 0 ? htsi : hcat(HtSi, htsi)
         (x, H, HtSi)
     end
-    K = P * HtSi
+    K = e.P * HtSi
     
-    P -= K * H * P
+    P = e.P - K * H * e.P
     
-    KalmanEstimated((P + P') / 2, V(x))
+    KalmanEstimated((P + P') / 2, x)
 end
